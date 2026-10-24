@@ -1,0 +1,46 @@
+# Binaries / build output
+bin/
+dist/
+testbin/
+*.exe
+*.test
+*.out
+*.o
+*.a
+*.so
+__debug_bin*
+
+# Go
+vendor/
+*.swp
+
+# Coverage
+cover.out
+cover.html
+coverage.txt
+
+# Kubernetes / local clusters / kubeconfig
+kubeconfig
+*.kubeconfig
+*.kubeconfig.yaml
+
+# Secrets / local env (never commit — see CLAUDE.md)
+.env
+.env.*
+*.local
+*.pem
+*.key
+
+# Editor / OS
+.DS_Store
+.idea/
+*.iml
+.vscode/
+*~
+
+# host-built demo binary (see Dockerfile.demo)
+argus-demo.bin
+
+# LiteLLM lab runtime output (spec 006a F0)
+docs/research/litellm-lab/records/
+__pycache__/

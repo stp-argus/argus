@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Local LiteLLM Proxy learning environment. Registers argus-sample-app's mock
+# upstream (host port 18080) as the backend so LiteLLM's behavior can be
+# studied hands-on with no real LLM key. See ../2026-07-26_litellm-proxy-investigation.md.
+services:
+  litellm:
+    image: docker.litellm.ai/berriai/litellm:latest
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./guardrails:/app/guardrails
+      # spec 006a: mount the CANONICAL Observe guardrail (hack/guardrail/) straight
+      # in rather than copying it here — the chart ConfigMap copy is already one
+      # duplicate too many (FR-005). The 07-26 dummy PoC stays alongside it.
+      #
+      # Mounted as its OWN directory, not as a file inside ./guardrails: a file
+      # bind-mount makes Docker create an empty placeholder on the host, which
+      # then shows up as an untracked file. /app is on sys.path, so the module
+      # resolves as argus_canonical.argus_guardrail (PEP 420 namespace package).
+      - ../../../hack/guardrail:/app/argus_canonical:ro
+      - ./records:/records
+    environment:
+      - LITELLM_MASTER_KEY=sk-argus-lab-1234
+      # No DB — virtual key/team persistence is unavailable, but unnecessary
+      # for verifying guardrail hook behavior.
+      # ── argus 006a guardrail contract (same env names the chart injects) ──
+      - ARGUS_RECORDS_PATH=/records/records.jsonl
+      - ARGUS_PRINCIPAL_HEADER=X-Principal-Id
+      - ARGUS_RUN_ID_HEADER=X-Run-Id
+      # F0 instrumentation — prints what actually reaches each hook. Lab only.
+      - ARGUS_DEBUG_DUMP=1
+      # ── spec 006c decision engine ──────────────────────────────────────
+      # Everything below is passed through from the host shell so one lab can be
+      # flipped between Observe (record only) and Enforce (block) without editing
+      # this file. Unset -> the engine's own defaults, which are Observe + every
+      # axis disabled. That default matters: an axis with no measured evidence
+      # behind it must not fire, and an unconfigured lab must not block.
+      #
+      # Thresholds come from hack/analyze/derive_thresholds.py over a 3-cohort
+      # run (129 calls). Do not hand-edit them here — re-derive and paste.
+      - ARGUS_CONTROL_LEVEL
+      - ARGUS_DUPLICATE_CALLS_SOFT
+      - ARGUS_DUPLICATE_CALLS_HARD
+      - ARGUS_PRINCIPAL_CALLS_SOFT
+      - ARGUS_PRINCIPAL_CALLS_HARD
+      - ARGUS_RUN_STEPS_SOFT
+      - ARGUS_RUN_STEPS_HARD
+      - ARGUS_ROTATION_GAP_SOFT
+      - ARGUS_ROTATION_GAP_HARD
+      - ARGUS_SOFT_ESCALATION
+      - ARGUS_COOLDOWN_S
+      - ARGUS_WINDOW_S
+      # Passed through from the host shell, never written here (US4).
+      # Only needed for the argus-real-gpt model; the mock path works without it.
+      - OPENROUTER_API_KEY
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    extra_hosts:
+      # So host.docker.internal resolves on Linux Docker Engine too (Docker
+      # Desktop supports it out of the box).
+      - "host.docker.internal:host-gateway"

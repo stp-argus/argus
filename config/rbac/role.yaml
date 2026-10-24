@@ -1,0 +1,45 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - argus.stp.io
+  resources:
+  - runawaypolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - argus.stp.io
+  resources:
+  - runawaypolicies/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - argus.stp.io
+  resources:
+  - runawaypolicies/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create

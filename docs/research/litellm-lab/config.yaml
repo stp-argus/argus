@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Step 1: register a model only. Registers argus-sample-app's mock server as
+# an OpenAI-compatible backend. api_key is unchecked by the mock, so any
+# string works.
+model_list:
+  - model_name: argus-mock-gpt
+    litellm_params:
+      model: openai/gpt-mock-4o
+      api_base: http://host.docker.internal:18080/v1
+      api_key: "sk-fake-not-checked-by-mock"
+    model_info:
+      # Not in LiteLLM's built-in cost map, so cost would be 0 without this.
+      # Giving the mock a price keeps the cost path exercised with no real key
+      # (spec 006a F0, side finding 2).
+      input_cost_per_token: 0.0000025
+      output_cost_per_token: 0.00001
+
+  # Real model, for the two F0 items the mock structurally cannot answer:
+  # streaming usage (the mock has no SSE at all) and cached/reasoning token
+  # detail. Key comes from the environment ONLY — never inline (US4).
+  #   export OPENROUTER_API_KEY=...   # then: docker compose up -d
+  - model_name: argus-real-gpt
+    litellm_params:
+      model: openrouter/openai/gpt-5.6-luna
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # spec 006d — 신원 포착용 캐치올.
+  #
+  # Claude Code·Codex 같은 실제 도구는 자기가 아는 모델 이름을 보낸다
+  # (claude-sonnet-4-5, gpt-5-codex, …). 그 이름들을 하나하나 등록할 수는 없으므로
+  # 와일드카드로 받아 **mock 업스트림**으로 보낸다.
+  #
+  # mock 으로 보내는 이유가 핵심이다: 우리가 알고 싶은 건 **요청이 무엇을 들고 오는가**이고,
+  # 그건 pre_call 훅에서 이미 다 얻는다. 업스트림 응답은 필요 없다.
+  # 실모델로 보내면 도구가 큰 컨텍스트를 밀어넣어 돈이 나가는데 얻는 건 같다.
+  - model_name: "*"
+    litellm_params:
+      model: openai/gpt-mock-4o
+      api_base: http://host.docker.internal:18080/v1
+      api_key: "sk-fake-not-checked-by-mock"
+
+litellm_settings:
+  drop_params: true
+
+# Step 2: register a guardrail. pre_call = our code runs BEFORE the LLM call
+# goes out. default_on: true is the key field — it applies whether or not the
+# caller opts in (no bypass), the emphasis of the 2026-07-25 direction doc.
+# spec 006a (F0): the Observe recorder. Registered instead of the 07-26 dummy —
+# the dummy blocks from the 3rd call, which would cut the spike short. This one
+# never raises; it only records. The dummy file stays in ./guardrails for reference.
+guardrails:
+  - guardrail_name: "argus-observe"
+    litellm_params:
+      guardrail: argus_canonical.argus_guardrail.ArgusObserve
+      mode: "pre_call"
+      default_on: true

@@ -1,0 +1,9 @@
+# Auto-requests reviewers. See MAINTAINERS.md.
+
+*                 @song2h
+/api/             @song2h @leeyonghe
+/internal/        @song2h @leeyonghe
+/cmd/             @song2h @leeyonghe
+/config/          @song2h @leeyonghe
+/hack/guardrail/  @song2h @BusanGukbap
+/dashboard/       @BusanGukbap

@@ -1,0 +1,65 @@
+name: ci
+
+# `dev` is the default branch (since 2026-07-13) — a `main`-only trigger meant this workflow never
+# ran. Both are listed: `main` still receives release merges.
+on:
+  push:
+    branches: [dev, main]
+    paths: ["**.go", "go.mod", "go.sum", "Makefile", "Dockerfile", "config/**", "hack/guardrail/**", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["**.go", "go.mod", "go.sum", "Makefile", "Dockerfile", "config/**", "hack/guardrail/**", ".github/workflows/ci.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      # 파이썬 폴백 엔진·신호 추출 5개 스위트. 판정 로직은 Go/파이썬 두 벌이라 한쪽만 돌리면
+      # 폴백 순간 판정이 달라진다. python_parity_test.go 는 python3 가 없으면 조용히 스킵되므로
+      # 아래에서 있음을 명시적으로 확인한다.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test (Python guardrail suites)
+        run: python3 -m unittest discover -s hack/guardrail -p 'test_*.py'
+      - name: Test
+        run: |
+          make test
+          go test ./internal/decide/ -run 'TestDecisionParityWithPython|TestRandomParityWithPython' -v 2>&1 | tee /tmp/parity.log
+          for t in TestDecisionParityWithPython TestRandomParityWithPython; do
+            grep -q -- "--- PASS: $t" /tmp/parity.log || { echo "::error::$t 가 PASS 가 아니다(스킵됐거나 실패)"; exit 1; }
+          done
+
+      # The chart's CRD is generated from api/**/*_types.go and shipped by the release workflow.
+      # If a PR edits the types but forgets `make manifests generate`, the cluster would receive a
+      # CRD that does not match the code. Fail here instead.
+      - name: CRD / RBAC drift
+        run: |
+          make manifests generate
+          if ! git diff --exit-code -- config/ api/; then
+            echo "::error::Generated artifacts are stale. Run 'make manifests generate' and commit the diff."
+            exit 1
+          fi
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Build only (no push) so a broken Dockerfile fails on the PR, not at release time.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

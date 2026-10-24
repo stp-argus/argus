@@ -1,0 +1,65 @@
+# ARGUS 운영 출발점 — OpenRouter · AWS Bedrock 을 LiteLLM 모델로 등록한 조직 게이트웨이.
+#
+#   helm install argus oci://ghcr.io/stp-argus/charts/argus --version 0.2.0 -n argus-system -f examples/production.yaml
+#
+# 먼저 할 것 (docs/production.md §1): Secret litellm-master-key · litellm-db · provider-keys 를 만든다.
+# 쓰지 않는 공급자 블록은 지운다. `policy`·`litellm.guardrail`·최상위 키의 오타와 잘못된 값은 values.schema.json 이
+# 설치 전에 거절한다(나머지는 자유 형식이라 검사하지 않는다).
+
+policy:
+  enabled: true
+  controlLevel: Observe          # Observe(기록만) → Guard(사용량·비용 상한만 차단) → Enforce(전부 차단)
+  window: 60s
+  cooldown: 30s
+  detect:                        # 출발점. 우리 조직 트래픽을 Observe 로 본 뒤 조정한다 (docs/production.md §2)
+    duplicateCalls: {soft: 5, hard: 20}
+    principalCalls: {soft: 17, hard: 19}
+    runSteps: {soft: 9, hard: 18}
+    conversationGrowth: {soft: "96.98", hard: "130.2"}
+    rotationGap: {enabled: false}
+    messageBytes: {enabled: false}
+  backstop:                      # 주체(가상 키 user_id)·팀 단위 상한 — 키를 돌려도 누적된다
+    # ⚠️ 상한은 낮은 쪽이 이긴다 — 위 detect.principalCalls.hard(19/60초)가 실제 상한이다.
+    #    principal_calls 는 사용량 축이라 Guard 도 19 부터 막는다. Guard·Enforce 전에 detect 값을 조직 트래픽으로 다시 정한다.
+    principalCalls: 200
+    teamCalls: 400
+    budgetUSD: "20"
+    failureMode: Open            # Closed: 오퍼레이터가 60초 넘게 안 닿으면 Guard·Enforce 에서 막는다
+
+litellm:
+  enabled: true
+  generateSecrets: false         # 운영은 Secret 을 미리 만든다
+  providerKeySecret: provider-keys
+  models:
+    # OpenRouter — 응답에 실측 비용을 싣게 한다(extra_body.usage). 없으면 LiteLLM 단가표로 계산한다.
+    - model_name: gpt
+      litellm_params:
+        model: openrouter/openai/gpt-5.6-luna
+        api_key: os.environ/OPENROUTER_API_KEY
+        extra_body: {usage: {include: true}}
+    # AWS Bedrock — Claude Sonnet 5 는 bedrock-runtime 에서 geo/global inference profile ID 만 받는다
+    # (AWS model card, 2026-09-26 확인). 자격증명은 아래 serviceAccount(IRSA·Pod Identity)로.
+    - model_name: claude
+      litellm_params:
+        model: bedrock/us.anthropic.claude-sonnet-5
+        aws_region_name: us-east-1
+  serviceAccount:
+    create: true
+    annotations: {}              # IRSA: {eks.amazonaws.com/role-arn: arn:aws:iam::<account>:role/<litellm-bedrock>}
+  guardrail:
+    enabled: true
+    blockStatus: 403             # 429 면 SDK 가 자동 재시도한다
+  database:
+    enabled: true
+    persistence: {enabled: true, size: 5Gi}
+  records:
+    enabled: true
+    retention: {enabled: true, keepDays: 30}
+
+networkPolicy:
+  enabled: true                  # /v1/decide 는 인증이 없다 — 같은 릴리스의 LiteLLM 만 부르게
+  metricsFrom: []                # Prometheus 네임스페이스를 넣는다
+
+metrics:
+  serviceMonitor: {enabled: false}
+  prometheusRule: {enabled: false}

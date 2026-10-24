@@ -1,0 +1,438 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: runawaypolicies.argus.stp.io
+spec:
+  group: argus.stp.io
+  names:
+    kind: RunawayPolicy
+    listKind: RunawayPolicyList
+    plural: runawaypolicies
+    singular: runawaypolicy
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: RunawayPolicy is the Schema for the runawaypolicies API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of RunawayPolicy
+            properties:
+              backstop:
+                description: backstop — 덮어쓸 수 없는 천장.
+                properties:
+                  budgetUSD:
+                    description: |-
+                      budgetUSD — principal 누적 지출 상한. 문자열인 이유는 RatioAxisSpec 주석과 같다.
+
+                      **이 값은 측정에서 도출하지 않는다.** 상한 자체가 정책이다(폭주 분류 문서).
+                      시험 데이터로 뽑으면 $0.0009 같은 값이 나오고, 켜면 정상 사용자가 막힌다.
+                    pattern: ^\d+(\.\d{1,4})?$
+                    type: string
+                  failureMode:
+                    default: Open
+                    description: failureMode — backstop 은 전역 기본값과 **독립적으로** fail-closed
+                      가 될 수 있다.
+                    enum:
+                    - Open
+                    - Closed
+                    type: string
+                  principalCalls:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  teamCalls:
+                    description: |-
+                      teamCalls — 팀(가상 키의 team_id) 단위 창 누적 호출 상한 (G2 identity exhaustion 의 부분 해소, STP-16).
+                      주체를 여러 개 **합법적으로** 획득한 공격(키 다중 발급·SA 다중 보유)은 사다리로 못 막는다 —
+                      상위 묶음이 있어야 잡힌다. 팀이 없는 호출(header/api_key 티어)엔 평가하지 않는다.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
+              controlLevel:
+                default: Observe
+                description: |-
+                  controlLevel — 단계적 적용 사다리. **기본값이 Observe 인 것이 중요하다.**
+
+                  쿠버네티스 정책 생태계(Gatekeeper/Kyverno)의 합의가 audit → enforce 이고,
+                  "갑작스러운 강제가 플랫폼 팀이 앱 팀의 신뢰를 잃는 방식"이라는 경고가 그 근거다.
+                    Observe — 판정은 돌지만 통과. would_block 만 기록
+                    Guard   — 사용량·비용(volume·cost) 축 hard 만 차단, 행동 축은 기록만.
+                              backstop 상한뿐 아니라 detect.principalCalls hard 도 volume 이라 막힌다
+                    Enforce — 모든 축 hard 차단
+                enum:
+                - Observe
+                - Guard
+                - Enforce
+                type: string
+              cooldown:
+                default: 30s
+                description: |-
+                  cooldown — 한 번 걸린 principal 을 유지하는 시간 (서킷 브레이커식 히스테리시스).
+                  윈도우가 미끄러지며 걸렸다 풀렸다 하는 플래핑을 막는다.
+                type: string
+              detect:
+                description: detect — 탐지축별 임계.
+                properties:
+                  budgetUSD:
+                    description: |-
+                      budgetUSD — principal 누적 지출. 엔진은 8/25 부터 이 축을 세고 있었는데 선언 표면이 없어
+                      hard 는 backstop.budgetUSD 로만, soft 는 어디서도 켤 수 없었다 (2차 검증 피드백
+                      "Agent 단위 비용 항목이 거버넌스 정책에 필요", Linear STP-14).
+                      backstop.budgetUSD 는 여전히 천장이다 — 여기 hard 가 backstop 보다 크면 backstop 이 이긴다.
+                    properties:
+                      enabled:
+                        default: true
+                        description: enabled — AxisSpec.Enabled 와 동일. 생략 = true.
+                        type: boolean
+                      hard:
+                        pattern: ^\d+(\.\d{1,4})?$
+                        type: string
+                      soft:
+                        pattern: ^\d+(\.\d{1,4})?$
+                        type: string
+                    type: object
+                  conversationGrowth:
+                    description: |-
+                      conversationGrowth — 이번 호출 크기 ÷ 그 대화의 첫 호출 크기. 호출 수는 적은데 매 턴 부푸는
+                      폭주 (G3, STP-19) — 컨텍스트 누적은 비용을 O(N²) 로 키우는데 호출 카운터는 조용하다.
+                      ⚠️ 위와 같은 이유로 임계는 도출 전까지 비운다.
+                    properties:
+                      enabled:
+                        default: true
+                        description: enabled — AxisSpec.Enabled 와 동일. 생략 = true.
+                        type: boolean
+                      hard:
+                        pattern: ^\d+(\.\d{1,2})?$
+                        type: string
+                      soft:
+                        pattern: ^\d+(\.\d{1,2})?$
+                        type: string
+                    type: object
+                  duplicateCalls:
+                    description: |-
+                      duplicateCalls — 같은 대화 안에서 동일 (도구, 인자값) 지문이 반복된 횟수.
+
+                      **대화 전체를 해싱하면 안 된다.** 폭주 대화는 스텝마다 자라서 매번 다른 해시가 나온다.
+                      도구 지문은 그 성장에 오염되지 않는다.
+                      실측(2026-09-20 재도출): 정상 최대 3 · soft 5 / hard 20 · 탐지 핑퐁 92%·재시도 87% · 오탐 0%.
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          enabled — 임계 숫자를 지우지 않고 축만 끈다.
+
+                          임계값은 실측으로 도출한 **근거**라, 축을 끄려고 숫자를 지우게 하면 근거가
+                          같이 사라진다. helm values 의 `*.enabled` 와 같은 결 — 값은 보존, 스위치만 내린다.
+                          생략 = true.
+                        type: boolean
+                      hard:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      soft:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  messageBytes:
+                    description: |-
+                      messageBytes — 한 호출의 메시지 크기(바이트). 단일 초대형 호출 (G4, Linear STP-19).
+                      ⚠️ 임계는 실트래픽에서 도출 전까지 비운다. 정상 사용에도 큰 호출은 있다 — soft 부터.
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          enabled — 임계 숫자를 지우지 않고 축만 끈다.
+
+                          임계값은 실측으로 도출한 **근거**라, 축을 끄려고 숫자를 지우게 하면 근거가
+                          같이 사라진다. helm values 의 `*.enabled` 와 같은 결 — 값은 보존, 스위치만 내린다.
+                          생략 = true.
+                        type: boolean
+                      hard:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      soft:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  principalCalls:
+                    description: |-
+                      principalCalls — principal 별 윈도우 누적 호출. 핑퐁 재귀의 backstop.
+
+                      실측(2026-09-07 도출, 09-20 재확인 정상 최대 12): 현행 soft 17 / hard 19 · 오탐 0%.
+                      ⚠️ **호출 간격에 의존한다.** 대조군의 간격은 설계값이라 이 임계는 부분적으로 설계다.
+                      실사용 트래픽으로 재측정이 필요하다.
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          enabled — 임계 숫자를 지우지 않고 축만 끈다.
+
+                          임계값은 실측으로 도출한 **근거**라, 축을 끄려고 숫자를 지우게 하면 근거가
+                          같이 사라진다. helm values 의 `*.enabled` 와 같은 결 — 값은 보존, 스위치만 내린다.
+                          생략 = true.
+                        type: boolean
+                      hard:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      soft:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  rotationGap:
+                    description: |-
+                      rotationGap — principal 누적 ÷ run 당 최대. run 을 잘게 쪼갤수록 커진다.
+
+                      per-run 상한을 피하려는 시도 자체가 신호가 된다.
+                      실측: 정상 최대 2 · 폭주 5.8. run 이 하나뿐이면 정의상 1.0 이라 신호가 아니다.
+                    properties:
+                      enabled:
+                        default: true
+                        description: enabled — AxisSpec.Enabled 와 동일. 생략 = true.
+                        type: boolean
+                      hard:
+                        pattern: ^\d+(\.\d{1,2})?$
+                        type: string
+                      soft:
+                        pattern: ^\d+(\.\d{1,2})?$
+                        type: string
+                    type: object
+                  runSteps:
+                    description: |-
+                      runSteps — run 하나의 호출 수.
+
+                      ⚠️ **핑퐁 재귀에 탐지율 0% 다.** runId 를 회전시키면 카운터가 매번 리셋돼
+                      정상의 최대값(5)을 넘지 못한다. 이 축을 단독으로 쓰면 핑퐁을 통째로 놓친다.
+                      제품이 principal 축을 필요로 하는 이유가 이 숫자다.
+                    properties:
+                      enabled:
+                        default: true
+                        description: |-
+                          enabled — 임계 숫자를 지우지 않고 축만 끈다.
+
+                          임계값은 실측으로 도출한 **근거**라, 축을 끄려고 숫자를 지우게 하면 근거가
+                          같이 사라진다. helm values 의 `*.enabled` 와 같은 결 — 값은 보존, 스위치만 내린다.
+                          생략 = true.
+                        type: boolean
+                      hard:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      soft:
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                type: object
+              enabled:
+                default: true
+                description: |-
+                  enabled — 정책 전체를 **지우지 않고** 끈다. 생략 = true.
+
+                  CR 을 지우면 GitOps diff 와 함께 선언의 역사가 사라진다. 잠깐 내리고 싶은 것뿐이라면
+                  (사고 조사, 데모 준비, 임계 재측정) 스위치가 맞다. 꺼진 정책은 status 에
+                  `Programmed=False reason=Disabled` 로 정직하게 남는다 — 조용히 무시되지 않는다.
+                type: boolean
+              identity:
+                description: identity — 대화 축을 무엇에서 얻을 것인가. 비우면 내장 기본값.
+                properties:
+                  conversationHeaders:
+                    description: |-
+                      conversationHeaders — 대화 축으로 쓸 헤더. **순서가 우선순위다.**
+                      비우면 내장 기본 사다리(Claude Code → Codex → 일반)를 쓴다.
+
+                      사내 에이전트가 자체 헤더(`x-acme-session`)를 쓴다면 여기 한 줄로 붙인다 —
+                      가드레일 파이썬을 고칠 일이 아니다.
+                    items:
+                      type: string
+                    type: array
+                  onUnknownConversation:
+                    default: Skip
+                    description: "onUnknownConversation — 대화 축을 끝내 못 정했을 때.\n\n\tSkip
+                      \  (기본) 대화 스코프 축(duplicate_calls)을 **평가하지 않는다.**\n\t              모르는
+                      것을 세지 않는다 — 가짜 버킷에 넣으면 무관한 작업이\n\t              서로의 반복으로 세어져
+                      오탐이 된다.\n\tDerive        (principal, model, 첫 메시지)로 파생한다. 대화가
+                      짧고 시작 메시지가\n\t              충분히 다른 환경에서만 켠다."
+                    enum:
+                    - Skip
+                    - Derive
+                    type: string
+                  trustGatewaySession:
+                    default: true
+                    description: |-
+                      trustGatewaySession — 게이트웨이가 이미 정규화한 세션을 신뢰할 것인가.
+
+                      LiteLLM 은 `x-<vendor>-session-id` 를 훑어 `litellm_session_id` 를 채워 준다.
+                      우리가 열거하지 못한 벤더까지 덮어 주므로 기본은 **신뢰(true)** 다.
+                      끄는 경우: 그 로직이 `x-litellm-trace-id` 를 최우선으로 쓰는데, trace 를 요청마다
+                      새로 발급하는 클라이언트가 있으면 대화가 매 호출 쪼개진다. 그때 끄고 헤더를 직접 지정한다.
+                    type: boolean
+                type: object
+              stepCap:
+                description: |-
+                  stepCap — **Deprecated.** `detect.runSteps.hard` 를 쓴다.
+                  이미 배포된 CR 이 이 필드를 쓰고 있어 하위호환으로 남긴다. 설정되면 runSteps.hard 로 옮긴다.
+                format: int32
+                minimum: 1
+                type: integer
+              targetRefs:
+                description: |-
+                  targetRefs — 이 정책이 붙는 대상. 비어 있으면 **자기 네임스페이스 전체**에 적용된다.
+
+                  Namespace 를 가리키면 상속(GEP-2649), HTTPRoute 등을 가리키면 직접 부착(GEP-2648).
+                items:
+                  description: |-
+                    PolicyTargetReference — GEP-713 Policy Attachment 의 부착 대상.
+
+                    설계 정본(§6)은 gateway-api 의 LocalPolicyTargetReferenceWithSectionName 을 쓴다고 적어놨다.
+                    여기서는 같은 모양의 로컬 타입을 둔다 — gateway-api 의존을 지금 끌어오면 계약 ① 비준 전에
+                    API 표면이 그쪽 버전에 묶인다. 비준 시 이 타입을 그대로 교체하면 된다(필드 이름이 같다).
+                  properties:
+                    group:
+                      description: group 은 대상의 API 그룹. 코어 리소스(Namespace 등)는 빈 문자열.
+                      type: string
+                    kind:
+                      description: kind 는 대상 종류. Namespace 면 상속(GEP-2649), HTTPRoute
+                        면 직접 부착(GEP-2648).
+                      type: string
+                    name:
+                      type: string
+                  required:
+                  - kind
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              window:
+                default: 60s
+                description: window — 슬라이딩 윈도우 크기. 고정 윈도우는 경계에서 2배 버스트를 허용한다.
+                type: string
+            type: object
+          status:
+            description: status defines the observed state of RunawayPolicy
+            properties:
+              activeAxes:
+                description: |-
+                  activeAxes — 실제로 켜진(임계가 0 이 아닌) 탐지축 이름.
+
+                  **이게 비어 있으면 이 정책은 아무것도 탐지하지 않는다.** 선언은 했는데 축이 다 꺼져 있는
+                  상태를 조용히 넘기지 않으려고 status 에 드러낸다.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: atomic
+              conditions:
+                description: |-
+                  conditions represent the current state of the RunawayPolicy resource.
+                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
+
+                  Standard condition types include:
+                  - "Available": the resource is fully functional
+                  - "Progressing": the resource is being created or updated
+                  - "Degraded": the resource failed to reach or maintain its desired state
+
+                  The status of each condition is one of True, False, or Unknown.
+
+                  ARGUS 가 쓰는 조건 타입:
+                    Accepted   — 컨트롤러가 이 정책을 받아 파싱했다 (GEP-713 규약)
+                    Programmed — 탭이 실제로 이 정책으로 돌고 있다 (GEP-713 규약)
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: observedGeneration — 컨트롤러가 마지막으로 처리한 spec 세대.
+                format: int64
+                type: integer
+              renderedConfigMap:
+                description: renderedConfigMap — 탭이 읽는 정책 파일을 담은 ConfigMap 이름.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

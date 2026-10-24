@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- argus_v1alpha1_runawaypolicy.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

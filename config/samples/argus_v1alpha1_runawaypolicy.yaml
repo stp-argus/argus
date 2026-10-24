@@ -1,0 +1,20 @@
+# Platform policy: declare it in the operator's namespace (the "tap namespace"; same as LiteLLM in a chart install).
+# Thresholds are the ones derived from measured control agents (docs/thresholds.md).
+apiVersion: argus.stp.io/v1alpha1
+kind: RunawayPolicy
+metadata:
+  name: observe-default
+spec:
+  controlLevel: Observe   # Observe (record only) → Guard (block volume/cost caps) → Enforce (block all)
+  window: 60s
+  cooldown: 30s
+  detect:
+    duplicateCalls: {soft: 5, hard: 20}
+    principalCalls: {soft: 17, hard: 19}
+    runSteps: {soft: 9, hard: 18}
+    conversationGrowth: {soft: "96.98", hard: "130.2"}
+  backstop:
+    principalCalls: 200
+    teamCalls: 400
+    budgetUSD: "1"
+    failureMode: Open
